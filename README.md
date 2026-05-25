@@ -11,13 +11,22 @@ Studi kasus Kafka untuk delivery app: real-time driver location + order status t
 
 ```
 delivery-kafka/
-├── docker-compose.yml       # 3-broker KRaft cluster + Kafka UI
+├── compose.yml              # 3-broker KRaft cluster + Kafka UI
+├── go.work                  # Go Workspace untuk manage multi-module
+├── schema/                  # Shared models & event envelopes
+│   └── models.go            # Struct EventEnvelope, LocationPayload, dsb.
 ├── scripts/
 │   └── init-topics.sh       # Buat semua topics dengan best practice config
-├── producer/
-│   └── main.go              # Simulasi banyak driver (location + order status)
-├── consumer/
-│   └── main.go              # Consumer + REST API live tracking
+├── producer/                # Simulasi banyak driver (location + order status)
+│   ├── main.go              # Setup producer & root logic
+│   ├── driver.go            # Simulasi pergerakan GPS & state driver
+│   ├── kafka.go             # Inisialisasi Kafka client & record building
+│   └── helpers.go           # ID generator
+├── consumer/                # Consumer Kafka + REST API live tracking
+│   ├── main.go              # Setup consumer & root logic
+│   ├── api.go               # Huma v2 + Chi REST API routing
+│   ├── kafka.go             # Kafka polling loop & DLQ handler
+│   └── store.go             # In-memory TrackingStore & state
 └── Makefile                 # Shortcut semua perintah
 ```
 
