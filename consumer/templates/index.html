@@ -172,6 +172,53 @@
             font-size: 0.9rem;
             font-weight: bold;
         }
+        .brutalist-btn {
+            background: var(--bg);
+            color: var(--black);
+            font-family: var(--font);
+            font-size: 0.9rem;
+            font-weight: bold;
+            border: 3px solid var(--black);
+            box-shadow: 4px 4px 0px var(--black);
+            padding: 4px 8px;
+            cursor: pointer;
+            margin-top: 8px;
+            width: 100%;
+        }
+        .brutalist-btn:active {
+            box-shadow: 0px 0px 0px var(--black);
+            transform: translate(4px, 4px);
+        }
+        .brutalist-modal-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(15, 15, 15, 0.8);
+            z-index: 9999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .brutalist-modal-overlay.hidden {
+            display: none;
+        }
+        .brutalist-modal {
+            background: var(--white);
+            border: 4px solid var(--black);
+            box-shadow: 12px 12px 0px var(--black);
+            width: 400px;
+            max-width: 90%;
+            padding: 20px;
+        }
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 4px solid var(--black);
+            padding-bottom: 10px;
+            margin-bottom: 10px;
+        }
+        .modal-header h2 { margin: 0; text-transform: uppercase; font-size: 1.2rem; }
+        .modal-header .brutalist-btn { width: auto; margin: 0; }
     </style>
 </head>
 <body>
@@ -193,6 +240,18 @@
             <ul id="log"></ul>
         </aside>
     </main>
+
+    <div id="order-modal" class="brutalist-modal-overlay hidden">
+        <div class="brutalist-modal">
+            <div class="modal-header">
+                <h2 id="modal-title">Order Details</h2>
+                <button id="modal-close" class="brutalist-btn">X</button>
+            </div>
+            <div class="modal-body" id="modal-body">
+                Loading...
+            </div>
+        </div>
+    </div>
 
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
@@ -278,11 +337,17 @@
             
             ensureDriverInSelect(driver_id);
 
+            let orderBtnHTML = '';
+            if (order_id) {
+                orderBtnHTML = `<button class="brutalist-btn" onclick="showOrderDetails('${order_id}')">View Order Details</button>`;
+            }
+
             const popupContent = `
                 <div class="brutalist-popup">
                     <h3>${driver_id}</h3>
                     <p>Order: ${order_id || 'Idle'}</p>
                     <p>Speed: ${speed_kmh.toFixed(1)} km/h</p>
+                    ${orderBtnHTML}
                 </div>
             `;
 
@@ -344,6 +409,38 @@
 
         // Start
         fetchInitialDrivers().then(connectWS);
+
+        // Modal Logic
+        const modalOverlay = document.getElementById('order-modal');
+        const modalBody = document.getElementById('modal-body');
+        const modalTitle = document.getElementById('modal-title');
+        
+        document.getElementById('modal-close').addEventListener('click', () => {
+            modalOverlay.classList.add('hidden');
+        });
+
+        async function showOrderDetails(orderId) {
+            modalTitle.textContent = "ORDER: " + orderId;
+            modalBody.innerHTML = "Loading...";
+            modalOverlay.classList.remove('hidden');
+
+            try {
+                const res = await fetch(`/track/order/${orderId}`);
+                const data = await res.json();
+                
+                if (data.order) {
+                    modalBody.innerHTML = `
+                        <p><strong>Status:</strong> <span class="status-badge" style="display:inline-block; font-size:0.8rem; padding: 4px 8px; margin-left: 8px;">${data.order.current_status}</span></p>
+                        <p><strong>Customer ID:</strong> ${data.order.customer_id}</p>
+                        <p><strong>Driver ID:</strong> ${data.order.driver_id}</p>
+                    `;
+                } else {
+                    modalBody.innerHTML = `<p style="color:red">Order not found.</p>`;
+                }
+            } catch (err) {
+                modalBody.innerHTML = `<p style="color:red">Failed to fetch order details.</p>`;
+            }
+        }
 
     </script>
 </body>
