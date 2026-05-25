@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Delivery Tracking Radar</title>
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+
+    <style>
+        /* BRUTALIST CSS */
+        @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap');
+
+        :root {
+            --bg: #E5FF00;
+            --black: #0F0F0F;
+            --white: #FFFFFF;
+            --red: #FF3366;
+            --blue: #00F0FF;
+            --font: 'Space Mono', monospace;
+            --border: 4px solid var(--black);
+            --shadow: 8px 8px 0px var(--black);
+        }
+
+        body {
+            background-color: var(--bg);
+            color: var(--black);
+            font-family: var(--font);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            box-sizing: border-box;
+        }
+
+        header {
+            background: var(--white);
+            border: var(--border);
+            box-shadow: var(--shadow);
+            padding: 20px;
+            margin-bottom: 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 2rem;
+            text-transform: uppercase;
+            letter-spacing: -1px;
+        }
+
+        .status-badge {
+            background: var(--blue);
+            color: var(--black);
+            border: 2px solid var(--black);
+            padding: 8px 16px;
+            font-weight: 700;
+            text-transform: uppercase;
+            box-shadow: 4px 4px 0px var(--black);
+        }
+
+        .status-badge.disconnected {
+            background: var(--red);
+            color: var(--white);
+        }
+
+        main {
+            flex: 1;
+            display: flex;
+            gap: 24px;
+            min-height: 0;
+        }
+
+        #map-container {
+            flex: 3;
+            background: var(--white);
+            border: var(--border);
+            box-shadow: var(--shadow);
+            position: relative;
+        }
+
+        #map {
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+
+        aside {
+            flex: 1;
+            background: var(--white);
+            border: var(--border);
+            box-shadow: var(--shadow);
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+
+        aside h2 {
+            margin-top: 0;
+            border-bottom: var(--border);
+            padding-bottom: 10px;
+            text-transform: uppercase;
+        }
+
+        #log {
+            flex: 1;
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            overflow-y: auto;
+            font-size: 0.85rem;
+        }
+
+        #log li {
+            border-bottom: 2px dashed var(--black);
+            padding: 8px 0;
+        }
+
+        #log li span.driver { font-weight: bold; color: var(--blue); background: var(--black); padding: 2px 4px;}
+        #log li span.speed { font-weight: bold; color: var(--red); }
+
+        /* Custom Popup Brutalist Style */
+        .leaflet-popup-content-wrapper {
+            background: var(--white) !important;
+            border: 3px solid var(--black) !important;
+            border-radius: 0 !important;
+            box-shadow: 6px 6px 0px var(--black) !important;
+            font-family: var(--font) !important;
+            color: var(--black) !important;
+        }
+        .leaflet-popup-tip {
+            border: 3px solid var(--black) !important;
+            border-top: none !important;
+            border-left: none !important;
+            background: var(--white) !important;
+            box-shadow: 4px 4px 0px var(--black) !important;
+        }
+        .brutalist-popup h3 {
+            margin: 0 0 8px 0;
+            text-transform: uppercase;
+            font-size: 1.1rem;
+            border-bottom: 2px solid var(--black);
+            padding-bottom: 4px;
+            background: var(--bg);
+            display: inline-block;
+        }
+        .brutalist-popup p {
+            margin: 4px 0;
+            font-size: 0.9rem;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>Delivery Radar</h1>
+        <div id="ws-status" class="status-badge disconnected">WS: Disconnected</div>
+    </header>
+
+    <main>
+        <div id="map-container">
+            <div id="map"></div>
+        </div>
+        <aside>
+            <h2>Live Feed</h2>
+            <ul id="log"></ul>
+        </aside>
+    </main>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+    <script>
+        // Inisialisasi Map (Pusat di Jakarta)
+        const map = L.map('map').setView([-6.2088, 106.8456], 13);
+
+        // Tile layer OSM standar, tapi difilter supaya agak grayscale/kontras tinggi
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
+        }).addTo(map);
+
+        // Custom Driver Icon
+        const driverIcon = L.icon({
+            iconUrl: '/assets/car.png',
+            iconSize: [40, 40], // ukuran disesuaikan
+            iconAnchor: [20, 20],
+            popupAnchor: [0, -20],
+        });
+
+        const markers = {}; // driver_id -> L.marker
+        const wsStatus = document.getElementById('ws-status');
+        const logEl = document.getElementById('log');
+
+        function logMessage(driverId, speed) {
+            const li = document.createElement('li');
+            li.innerHTML = `<span class="driver">${driverId}</span> moving at <span class="speed">${speed.toFixed(1)} km/h</span>`;
+            logEl.prepend(li);
+            if (logEl.children.length > 50) {
+                logEl.removeChild(logEl.lastChild);
+            }
+        }
+
+        // 1. Fetch initial drivers
+        async function fetchInitialDrivers() {
+            try {
+                const res = await fetch('/track/drivers');
+                const data = await res.json();
+                if (data.drivers) {
+                    data.drivers.forEach(d => {
+                        updateMarker(d);
+                    });
+                    
+                    // Fit bounds if there are markers
+                    const group = new L.featureGroup(Object.values(markers));
+                    if(Object.keys(markers).length > 0) {
+                        map.fitBounds(group.getBounds().pad(0.1));
+                    }
+                }
+            } catch (e) {
+                console.error("Gagal load initial drivers:", e);
+            }
+        }
+
+        function updateMarker(payload) {
+            const { driver_id, order_id, latitude, longitude, speed_kmh } = payload;
+            
+            const popupContent = `
+                <div class="brutalist-popup">
+                    <h3>${driver_id}</h3>
+                    <p>Order: ${order_id || 'Idle'}</p>
+                    <p>Speed: ${speed_kmh.toFixed(1)} km/h</p>
+                </div>
+            `;
+
+            if (markers[driver_id]) {
+                // Update existing marker
+                const marker = markers[driver_id];
+                marker.setLatLng([latitude, longitude]);
+                marker.getPopup().setContent(popupContent);
+            } else {
+                // Create new marker
+                const marker = L.marker([latitude, longitude], { icon: driverIcon }).addTo(map);
+                marker.bindPopup(popupContent);
+                markers[driver_id] = marker;
+            }
+        }
+
+        // 2. Setup WebSocket
+        function connectWS() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws/tracking`;
+            const ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                wsStatus.textContent = 'WS: Connected';
+                wsStatus.classList.remove('disconnected');
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const payload = JSON.parse(event.data);
+                    // Payload langsung berisi: {driver_id, order_id, latitude, longitude, ...} karena 
+                    // formatnya dari schema.LocationPayload jika kita mem-broadcast record.Value
+                    
+                    // Kita harus decode record.Value Kafka karena formatnya EventEnvelope
+                    // event_type: "driver.location.updated"
+                    // payload: {driver_id, ...}
+                    
+                    if (payload.event_type === "driver.location.updated" && payload.payload) {
+                        const loc = payload.payload;
+                        updateMarker(loc);
+                        logMessage(loc.driver_id, loc.speed_kmh);
+                    }
+                } catch (e) {
+                    console.error("Error parsing WS message:", e);
+                }
+            };
+
+            ws.onclose = () => {
+                wsStatus.textContent = 'WS: Disconnected';
+                wsStatus.classList.add('disconnected');
+                setTimeout(connectWS, 2000); // Reconnect
+            };
+        }
+
+        // Start
+        fetchInitialDrivers().then(connectWS);
+
+    </script>
+</body>
+</html>

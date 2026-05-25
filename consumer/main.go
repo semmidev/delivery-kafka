@@ -93,18 +93,21 @@ func main() {
 	}
 	defer dlqClient.Close()
 
+	hub := newHub()
+	go hub.run()
+
 	var wg sync.WaitGroup
 
 	// Kafka consumer goroutine
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		runConsumerLoop(ctx, consumerClient, dlqClient, store)
+		runConsumerLoop(ctx, consumerClient, dlqClient, store, hub)
 		slog.Info("Consumer loop selesai")
 	}()
 
 	// HTTP server dengan Huma + Chi
-	router := setupAPI(store)
+	router := setupAPI(store, hub)
 	server := &http.Server{
 		Addr:         httpAddr,
 		Handler:      router,

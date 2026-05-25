@@ -72,7 +72,7 @@ type ListDriversOutput struct {
 
 // ─── HTTP API (Huma + Chi) ────────────────────────────────────────────────────
 
-func setupAPI(store *TrackingStore) *chi.Mux {
+func setupAPI(store *TrackingStore, hub *Hub) *chi.Mux {
 	router := chi.NewMux()
 
 	// Middleware standar Chi
@@ -80,6 +80,17 @@ func setupAPI(store *TrackingStore) *chi.Mux {
 	router.Use(middleware.RealIP)
 	router.Use(middleware.Recoverer)
 	router.Use(middleware.Timeout(30 * time.Second))
+
+	// UI & WebSocket Routes (di luar Huma OpenAPI)
+	router.Get("/", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "templates/index.html")
+	})
+
+	router.Handle("/assets/*", http.StripPrefix("/assets/", http.FileServer(http.Dir("./assets"))))
+
+	router.Get("/ws/tracking", func(w http.ResponseWriter, r *http.Request) {
+		serveWs(hub, w, r)
+	})
 
 	// Inisialisasi Huma di atas Chi
 	config := huma.DefaultConfig(apiTitle, apiVersion)

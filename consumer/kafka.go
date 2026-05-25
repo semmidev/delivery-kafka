@@ -29,7 +29,7 @@ func newKafkaClient() (*kgo.Client, error) {
 	return kgo.NewClient(opts...)
 }
 
-func processRecord(ctx context.Context, record *kgo.Record, store *TrackingStore, dlqClient *kgo.Client) error {
+func processRecord(ctx context.Context, record *kgo.Record, store *TrackingStore, dlqClient *kgo.Client, hub *Hub) error {
 	var env schema.EventEnvelope
 	if err := json.Unmarshal(record.Value, &env); err != nil {
 		sendToDLQ(ctx, dlqClient, record, fmt.Sprintf("unmarshal envelope gagal: %v", err))
@@ -45,6 +45,8 @@ func processRecord(ctx context.Context, record *kgo.Record, store *TrackingStore
 		}
 		store.applyLocation(loc, env.Timestamp)
 		slog.Debug("lokasi driver diproses", "driver_id", loc.DriverID, "lat", loc.Latitude, "lng", loc.Longitude)
+		// Broadcast ke websocket
+		hub.broadcast <- record.Value
 
 	case topicOrderStatus:
 		var status schema.OrderStatusPayload
@@ -90,7 +92,7 @@ func sendToDLQ(ctx context.Context, client *kgo.Client, original *kgo.Record, re
 	})
 }
 
-func runConsumerLoop(ctx context.Context, client *kgo.Client, dlqClient *kgo.Client, store *TrackingStore) {
+func runConsumerLoop(ctx context.Context, client *kgo.Client, dlqClient *kgo.Client, store *TrackingStore, hub *Hub) {
 	for {
 		fetches := client.PollFetches(ctx)
 
@@ -105,7 +107,7 @@ func runConsumerLoop(ctx context.Context, client *kgo.Client, dlqClient *kgo.Cli
 		}
 
 		fetches.EachRecord(func(record *kgo.Record) {
-			if err := processRecord(ctx, record, store, dlqClient); err != nil {
+			if err := processRecord(ctx, record, store, dlqClient, hub); err != nil {
 				slog.Error("process record gagal (akan retry)", "err", err)
 			}
 		})
