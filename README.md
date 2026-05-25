@@ -2,6 +2,34 @@
 
 Studi kasus Kafka untuk delivery app: real-time driver location + order status tracking.
 
+## Table of Contents
+- [Demo & Screenshots](#demo--screenshots)
+- [Stack](#stack)
+- [Struktur](#struktur)
+- [Cara Pakai](#cara-pakai)
+- [Arsitektur & Best Practices](#arsitektur--best-practices)
+- [Debug Commands](#debug-commands)
+- [Kafka UI](#kafka-ui)
+- [Testing High Availability (Broker Down Scenario)](#testing-high-availability-broker-down-scenario)
+
+---
+
+## Demo & Screenshots
+
+### 1. Kafka UI Dashboard
+![Kafka UI](assets/1-kafka-ui.png)
+
+### 2. Huma OpenAPI Docs
+![Consumer API Docs](assets/2-consumer-api-docs.png)
+
+### 3. Real-Time Tracking UI (Brutalist Design)
+![Driver Tracking](assets/3-driver-tracking.png)
+
+### 4. Order Details Modal
+![Order Details](assets/4-order-details.png)
+
+---
+
 ## Stack
 - **Kafka 3.9** — KRaft mode (tanpa ZooKeeper), 3 broker
 - **Go** + [franz-go](https://github.com/twmb/franz-go)
@@ -9,7 +37,7 @@ Studi kasus Kafka untuk delivery app: real-time driver location + order status t
 
 ## Struktur
 
-```
+```text
 delivery-kafka/
 ├── compose.yml              # 3-broker KRaft cluster + Kafka UI
 ├── go.work                  # Go Workspace untuk manage multi-module
@@ -26,7 +54,9 @@ delivery-kafka/
 │   ├── main.go              # Setup consumer & root logic
 │   ├── api.go               # Huma v2 + Chi REST API routing
 │   ├── kafka.go             # Kafka polling loop & DLQ handler
-│   └── store.go             # In-memory TrackingStore & state
+│   ├── store.go             # In-memory TrackingStore & state
+│   ├── ws.go                # WebSocket hub untuk live map updates
+│   └── templates/           # UI frontend resources (HTML/CSS/JS)
 └── Makefile                 # Shortcut semua perintah
 ```
 
@@ -77,7 +107,7 @@ curl http://localhost:8081/healthz
 
 > **Note**: Kita menggunakan hyphens/strip (`-`) alih-alih titik (`.`) atau underscore (`_`) pada nama topic. Sistem internal metrics Kafka menerjemahkan titik dan underscore menjadi underscore. Hal ini dapat menyebabkan bentrok pada nama metrics (misal `delivery.driver` dan `delivery_driver` keduanya menjadi `delivery_driver`), sehingga Kafka akan memunculkan warning `Due to limitations in metric names...`. Menggunakan hyphens menghindari warning ini.
 
-```
+```text
 delivery-driver-location-updated   # lokasi GPS driver
 delivery-order-status-changed      # perubahan status pesanan
 delivery-order-created             # pesanan baru
@@ -126,7 +156,7 @@ delivery-dlq-failed-events         # dead letter queue
 
 ### Cluster Config
 - `replication.factor=3` — toleran kehilangan 2 broker sekaligus
-- `min.insync.replicas=2` — minimal 2 broker harus acknowledge
+- `min.insync.replicas=2` — minimal 2 broker acknowledge
 - `auto.create.topics.enable=false` — topic management eksplisit
 - `unclean.leader.election=false` — tidak korbankan konsistensi untuk availability
 - Kompresi `lz4` — fast compression, cocok untuk high-throughput
