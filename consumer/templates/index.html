@@ -124,6 +124,24 @@
         #log li span.driver { font-weight: bold; color: var(--blue); background: var(--black); padding: 2px 4px;}
         #log li span.speed { font-weight: bold; color: var(--red); }
 
+        .brutalist-select {
+            background: var(--white);
+            color: var(--black);
+            font-family: var(--font);
+            font-size: 1rem;
+            font-weight: bold;
+            border: 3px solid var(--black);
+            box-shadow: 4px 4px 0px var(--black);
+            padding: 8px;
+            margin-bottom: 20px;
+            width: 100%;
+            cursor: pointer;
+            outline: none;
+        }
+        .brutalist-select:focus {
+            background: var(--bg);
+        }
+
         /* Custom Popup Brutalist Style */
         .leaflet-popup-content-wrapper {
             background: var(--white) !important;
@@ -169,6 +187,9 @@
         </div>
         <aside>
             <h2>Live Feed</h2>
+            <select id="driver-select" class="brutalist-select">
+                <option value="">-- View All Drivers --</option>
+            </select>
             <ul id="log"></ul>
         </aside>
     </main>
@@ -196,6 +217,31 @@
         const markers = {}; // driver_id -> L.marker
         const wsStatus = document.getElementById('ws-status');
         const logEl = document.getElementById('log');
+        const driverSelect = document.getElementById('driver-select');
+        let selectedDriverId = "";
+
+        driverSelect.addEventListener('change', (e) => {
+            selectedDriverId = e.target.value;
+            if (selectedDriverId && markers[selectedDriverId]) {
+                const marker = markers[selectedDriverId];
+                map.setView(marker.getLatLng(), 15);
+                marker.openPopup();
+            } else {
+                const group = new L.featureGroup(Object.values(markers));
+                if(Object.keys(markers).length > 0) {
+                    map.fitBounds(group.getBounds().pad(0.1));
+                }
+            }
+        });
+
+        function ensureDriverInSelect(driverId) {
+            if (!Array.from(driverSelect.options).some(opt => opt.value === driverId)) {
+                const option = document.createElement('option');
+                option.value = driverId;
+                option.textContent = driverId;
+                driverSelect.appendChild(option);
+            }
+        }
 
         function logMessage(driverId, speed) {
             const li = document.createElement('li');
@@ -230,6 +276,8 @@
         function updateMarker(payload) {
             const { driver_id, order_id, latitude, longitude, speed_kmh } = payload;
             
+            ensureDriverInSelect(driver_id);
+
             const popupContent = `
                 <div class="brutalist-popup">
                     <h3>${driver_id}</h3>
@@ -248,6 +296,11 @@
                 const marker = L.marker([latitude, longitude], { icon: driverIcon }).addTo(map);
                 marker.bindPopup(popupContent);
                 markers[driver_id] = marker;
+            }
+
+            // Optional: follow driver if selected
+            if (selectedDriverId === driver_id) {
+                map.panTo([latitude, longitude], {animate: true});
             }
         }
 
