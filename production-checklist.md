@@ -16,20 +16,20 @@ Currently, `compose.yml` runs a 3-node KRaft cluster in "combined" mode (each no
 Currently, `KAFKA_LISTENER_SECURITY_PROTOCOL_MAP` is set to `PLAINTEXT` for all listeners, meaning data is unencrypted and anyone can connect without a password.
 
 - [ ] **Enable TLS/SSL Encryption**: Change external listeners to use `SSL` or `SASL_SSL` to encrypt traffic in transit between the Go microservices and the Kafka cluster.
-- [ ] **Enable SASL Authentication**: Implement SASL/SCRAM or mTLS (Mutual TLS) so that only authorized clients (your producer/consumer) can read/write to the cluster.
+- [x] **Enable SASL Authentication**: Implement w or mTLS (Mutual TLS) so that only authorized clients (your producer/consumer) can read/write to the cluster.
 - [ ] **Network Isolation / VPC**: Do not bind `EXTERNAL` listeners to public IPs `0.0.0.0` unless protected by strict security groups. Deploy Kafka within a private VPC subnet.
-- [ ] **Kafka ACLs**: Enable Access Control Lists (ACLs). The consumer service should only have `READ` access to specific topics, and the producer should only have `WRITE` access.
+- [x] **Kafka ACLs**: Enable Access Control Lists (ACLs). The consumer service should only have `READ` access to specific topics, and the producer should only have `WRITE` access.
 
 ## 3. Client Usage (Go / `franz-go`)
 
 Your client configurations are mostly solid (using idempotent producers, Lz4 compression, explicit consumer groups, and manual commits). However, a few critical adjustments are needed:
 
-- [ ] **Synchronous DLQ Handling**: In `consumer/kafka.go`, when a message fails parsing, you send it to the DLQ asynchronously (`client.Produce(ctx, dlqRecord, callback)`), and then return `nil` to immediately commit the offset. **Risk:** If the DLQ broker is down, the async produce fails, you log the error, but the offset is still committed. The failed message is permanently lost.
+- [x] **Synchronous DLQ Handling**: In `consumer/kafka.go`, when a message fails parsing, you send it to the DLQ asynchronously (`client.Produce(ctx, dlqRecord, callback)`), and then return `nil` to immediately commit the offset. **Risk:** If the DLQ broker is down, the async produce fails, you log the error, but the offset is still committed. The failed message is permanently lost.
   - *Fix:* Wait for the DLQ `Produce` promise to resolve before returning, OR only commit offsets after ensuring DLQ writes were successful.
 - [ ] **Offset Reset Strategy**: The consumer uses `kgo.ConsumeResetOffset(kgo.NewOffset().AtStart())`. If you deploy a new consumer group in production, it will process *all* historical data (up to 30 days based on retention).
   - *Fix:* Evaluate if you want new groups to start from `AtEnd()` (only new live data) or explicitly handle the massive initial load if using `AtStart()`.
-- [ ] **Security Configs in Go**: Update `kgo.NewClient(...)` to inject TLS certificates (`kgo.DialTLS`) and SASL credentials (`kgo.SASL`) matching your cluster's new security setup.
-- [ ] **Concurrent Processing**: The current `runConsumerLoop` processes messages strictly sequentially. If throughput spikes, you may experience consumer lag.
+- [x] **Security Configs in Go**: Update `kgo.NewClient(...)` to inject TLS certificates (`kgo.DialTLS`) and SASL credentials (`kgo.SASL`) matching your cluster's new security setup.
+- [x] **Concurrent Processing**: The current `runConsumerLoop` processes messages strictly sequentially. If throughput spikes, you may experience consumer lag.
   - *Fix:* Implement worker pools for message processing, but be extremely careful to track offsets properly (only commit the lowest contiguous processed offset).
 
 ## 4. Observability & Monitoring

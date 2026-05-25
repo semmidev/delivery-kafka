@@ -12,7 +12,7 @@ import (
 // DriverState adalah snapshot terbaru kondisi seorang driver.
 type DriverState struct {
 	DriverID        string          `json:"driver_id"         doc:"ID unik driver"`
-	CurrentOrderID  string          `json:"current_order_id"  doc:"Order yang sedang dikerjakan"`
+	CurrentOrderID  string          `json:"order_id"          doc:"Order yang sedang dikerjakan"`
 	Latitude        float64         `json:"latitude"          doc:"Posisi lintang terkini"`
 	Longitude       float64         `json:"longitude"         doc:"Posisi bujur terkini"`
 	Bearing         float64         `json:"bearing"           doc:"Arah hadap (0-360 derajat)"`
