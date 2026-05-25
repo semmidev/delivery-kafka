@@ -188,7 +188,11 @@ Ketika Anda menyimulasikan kegagalan (*node failure*), Anda bisa melihat perubah
 * **Active Controller:** Jika *broker* yang kebetulan sedang bertugas sebagai *Controller* (mandor) mati, KRaft akan langsung mendeteksi dan secara otomatis menunjuk *broker* yang masih hidup sebagai *Active Controller* baru dalam hitungan milidetik.
 
 #### 2. Membedah Angka Merah: URP, ISR, dan OSR
-Misal kita memiliki **83 Partisi** dengan **Replication Factor = 3** (total 249 salinan yang harus ada). Jika 1 *broker* mati, maka 83 salinan ikut hilang dari peredaran.
+Sebagai contoh di *dashboard* sering terlihat total **83 Partisi**. Dari mana angka ini?
+- **33 Partisi Buatan:** Berasal dari *topic* yang kita buat (`location-updated`=12, `status-changed`=6, `order-created`=6, `driver-assigned`=6, `dlq`=3).
+- **50 Partisi Internal:** Kafka otomatis membuat *topic* `__consumer_offsets` dengan *default* 50 partisi untuk melacak posisi baca dari *consumer group*.
+
+Dengan **Replication Factor = 3**, total salinan yang harus ada adalah 249 ($83 \times 3$). Jika 1 *broker* mati, maka 83 salinan ikut hilang dari peredaran.
 * **In Sync Replicas (ISR):** Jumlah salinan data yang saat ini sehat dan sinkron dengan *Leader*. (Misal: sisa 166 dari target 249).
 * **Out of Sync Replicas (OSR):** Jumlah replika yang tertinggal atau berada di *broker* yang mati (Misal: 83 replika).
 * **URP (Under Replicated Partitions) - Indikator Alarm:** Jumlah partisi yang jumlah replika aktifnya **kurang dari** target *Replication Factor*. Karena targetnya 3 tapi cuma tersisa 2, maka semua 83 partisi Anda berstatus *Under Replicated*. Ini adalah peringatan bahwa *cluster* sedang beroperasi dengan jaring pengaman yang berkurang.
