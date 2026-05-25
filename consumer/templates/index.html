@@ -429,10 +429,26 @@
                 const data = await res.json();
                 
                 if (data.order) {
+                    let historyHTML = '';
+                    if (data.order.status_history && data.order.status_history.length > 0) {
+                        historyHTML = `
+                            <h4 style="margin-top: 16px; border-bottom: 2px solid var(--black); text-transform: uppercase;">Status History</h4>
+                            <ul style="list-style-type: none; padding-left: 0; font-size: 0.85rem;">
+                                ${data.order.status_history.map(h => `
+                                    <li style="border-bottom: 1px dashed var(--black); padding: 4px 0;">
+                                        <strong>${h.from || 'NEW'}</strong> ➔ <strong style="color: var(--blue);">${h.to}</strong>
+                                        <br/><small>${new Date(h.timestamp).toLocaleString()}</small>
+                                    </li>
+                                `).join('')}
+                            </ul>
+                        `;
+                    }
+
                     modalBody.innerHTML = `
                         <p><strong>Status:</strong> <span class="status-badge" style="display:inline-block; font-size:0.8rem; padding: 4px 8px; margin-left: 8px;">${data.order.current_status}</span></p>
                         <p><strong>Customer ID:</strong> ${data.order.customer_id}</p>
                         <p><strong>Driver ID:</strong> ${data.order.driver_id}</p>
+                        ${historyHTML}
                     `;
                 } else {
                     modalBody.innerHTML = `<p style="color:red">Order not found.</p>`;
