@@ -30,3 +30,7 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# binaries
+consumer/delivery-consumer
+producer/delivery-producer
