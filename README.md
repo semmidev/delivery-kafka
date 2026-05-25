@@ -176,3 +176,33 @@ Mensimulasikan bencana di mana lebih dari satu broker mati bersamaan.
 docker stop kafka-1 kafka-2
 ```
 - **Hasil:** Producer akan menolak mengirim pesan baru dan memunculkan error. Ini adalah perilaku yang diinginkan (fail-safe) karena `acks=all` tidak bisa dipenuhi (hanya 1 broker yang tersisa, padahal butuh minimal 2). Kafka melindungi data Anda dengan menolak write daripada mengambil risiko data loss.
+
+---
+
+### Membedah Metrik High Availability (Studi Kasus Broker Down)
+
+Ketika Anda menyimulasikan kegagalan (*node failure*), Anda bisa melihat perubahan langsung pada metrik di *dashboard* Kafbat UI. Berikut adalah arti dari setiap metrik tersebut:
+
+#### 1. Dinamika Controller & KRaft
+* **Controller Type: KRaft:** Kafka menggunakan algoritma konsensus internal KRaft (Kafka Raft), bukan Zookeeper.
+* **Active Controller:** Jika *broker* yang kebetulan sedang bertugas sebagai *Controller* (mandor) mati, KRaft akan langsung mendeteksi dan secara otomatis menunjuk *broker* yang masih hidup sebagai *Active Controller* baru dalam hitungan milidetik.
+
+#### 2. Membedah Angka Merah: URP, ISR, dan OSR
+Misal kita memiliki **83 Partisi** dengan **Replication Factor = 3** (total 249 salinan yang harus ada). Jika 1 *broker* mati, maka 83 salinan ikut hilang dari peredaran.
+* **In Sync Replicas (ISR):** Jumlah salinan data yang saat ini sehat dan sinkron dengan *Leader*. (Misal: sisa 166 dari target 249).
+* **Out of Sync Replicas (OSR):** Jumlah replika yang tertinggal atau berada di *broker* yang mati (Misal: 83 replika).
+* **URP (Under Replicated Partitions) - Indikator Alarm:** Jumlah partisi yang jumlah replika aktifnya **kurang dari** target *Replication Factor*. Karena targetnya 3 tapi cuma tersisa 2, maka semua 83 partisi Anda berstatus *Under Replicated*. Ini adalah peringatan bahwa *cluster* sedang beroperasi dengan jaring pengaman yang berkurang.
+
+#### 3. Tabel Keseimbangan Beban (Leaders Skew)
+* **Leaders:** Setiap partisi hanya memiliki 1 *Leader* untuk *Read/Write*. Kafka membagi beban ini ke sisa *broker* yang hidup secara adil.
+* **Leaders Skew:** Persentase ketidakseimbangan beban antar *broker*. Jika angkanya mendekati 0-1%, artinya distribusi *Leader* nyaris sempurna dan tidak ada *broker* yang kewalahan.
+
+### Analogi Brankas (Memahami URP)
+
+Bayangkan Anda punya aturan: *"Setiap data transaksi wajib disimpan ke dalam **3 brankas** di gedung berbeda."*
+
+1. Tiba-tiba gedung tempat **Brankas 3** mati lampu (*broker down*).
+2. **Apakah datanya hilang?** **Tidak.** Kita masih bisa melayani transaksi pakai Brankas 1 dan Brankas 2. Sistem tidak *down*.
+3. **Apakah aturan terpenuhi?** **Tidak.** Aturannya butuh 3, tapi sekarang cuma ada 2 yang hidup. Kondisi inilah yang disebut **Under Replicated (URP)**.
+
+Kafka mewarnai metrik URP dengan warna merah sebagai peringatan dini (*early warning*): *"Kita masih bisa beroperasi, tapi jaring pengaman kita robek satu. Segera hidupkan kembali server yang mati sebelum server kedua ikut mati dan menyebabkan kehilangan data."*
