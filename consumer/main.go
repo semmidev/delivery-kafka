@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/twmb/franz-go/pkg/kgo"
+	"github.com/twmb/franz-go/pkg/sasl/scram"
 )
 
 // ─── Konstanta ────────────────────────────────────────────────────────────────
@@ -86,6 +87,10 @@ func main() {
 		kgo.SeedBrokers(brokers...),
 		kgo.RequiredAcks(kgo.AllISRAcks()),
 		kgo.ClientID("tracking-dlq-producer"),
+		kgo.SASL(scram.Auth{
+			User: "consumer",
+			Pass: "consumer-secret",
+		}.AsSha256Mechanism()),
 	)
 	if err != nil {
 		slog.Error("gagal membuat DLQ client", "err", err)

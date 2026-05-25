@@ -34,3 +34,9 @@ profile.cov
 # binaries
 consumer/delivery-consumer
 producer/delivery-producer
+
+/node_modules
+package.json
+package-lock.json
+test-ws.js
+test-ws-2.js

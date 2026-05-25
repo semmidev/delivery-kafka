@@ -55,10 +55,13 @@ func processRecord(ctx context.Context, record *kgo.Record, store *TrackingStore
 			}
 			return nil
 		}
-		store.applyLocation(loc, env.Timestamp)
-		slog.Debug("lokasi driver diproses", "driver_id", loc.DriverID, "lat", loc.Latitude, "lng", loc.Longitude)
-		// Broadcast ke websocket
-		hub.broadcast <- record.Value
+		if store.applyLocation(loc, env.Timestamp) {
+			slog.Debug("lokasi driver diproses", "driver_id", loc.DriverID, "lat", loc.Latitude, "lng", loc.Longitude)
+			// Broadcast ke websocket
+			hub.broadcast <- record.Value
+		} else {
+			slog.Debug("lokasi driver diabaikan (stale)", "driver_id", loc.DriverID)
+		}
 
 	case topicOrderStatus:
 		var status schema.OrderStatusPayload

@@ -59,7 +59,7 @@ func newTrackingStore() *TrackingStore {
 	}
 }
 
-func (s *TrackingStore) applyLocation(loc schema.LocationPayload, eventTime time.Time) {
+func (s *TrackingStore) applyLocation(loc schema.LocationPayload, eventTime time.Time) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -67,6 +67,11 @@ func (s *TrackingStore) applyLocation(loc schema.LocationPayload, eventTime time
 	if !ok {
 		d = &DriverState{DriverID: loc.DriverID}
 		s.drivers[loc.DriverID] = d
+	}
+
+	// Abaikan event yang out-of-order (lebih lama dari update terakhir)
+	if !d.LastUpdated.IsZero() && eventTime.Before(d.LastUpdated) {
+		return false
 	}
 
 	d.CurrentOrderID = loc.OrderID
@@ -84,6 +89,7 @@ func (s *TrackingStore) applyLocation(loc schema.LocationPayload, eventTime time
 	if len(d.LocationHistory) > maxLocationHistory {
 		d.LocationHistory = d.LocationHistory[len(d.LocationHistory)-maxLocationHistory:]
 	}
+	return true
 }
 
 func (s *TrackingStore) applyOrderStatus(status schema.OrderStatusPayload, eventTime time.Time) {
@@ -97,6 +103,11 @@ func (s *TrackingStore) applyOrderStatus(status schema.OrderStatusPayload, event
 			CustomerID: status.CustomerID,
 		}
 		s.orders[status.OrderID] = o
+	}
+
+	// Abaikan event yang out-of-order
+	if !o.LastUpdated.IsZero() && eventTime.Before(o.LastUpdated) {
+		return
 	}
 
 	o.DriverID = status.DriverID
