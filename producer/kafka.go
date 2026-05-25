@@ -8,6 +8,7 @@ import (
 
 	"github.com/sammidev/delivery-kafka/schema"
 	"github.com/twmb/franz-go/pkg/kgo"
+	"github.com/twmb/franz-go/pkg/sasl/scram"
 )
 
 // ─── Producer ─────────────────────────────────────────────────────────────────
@@ -15,6 +16,12 @@ import (
 func newKafkaClient() (*kgo.Client, error) {
 	opts := []kgo.Opt{
 		kgo.SeedBrokers(brokers...),
+
+		// Security: SCRAM-SHA-256 Authentication
+		kgo.SASL(scram.Auth{
+			User: "producer",
+			Pass: "producer-secret",
+		}.AsSha256Mechanism()),
 
 		// Durability: semua replika in-sync harus acknowledge
 		kgo.RequiredAcks(kgo.AllISRAcks()),

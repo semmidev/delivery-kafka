@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/sammidev/delivery-kafka/schema"
 	"github.com/twmb/franz-go/pkg/kgo"
+	"github.com/twmb/franz-go/pkg/sasl/scram"
 )
 
 // ─── Kafka Consumer ───────────────────────────────────────────────────────────
@@ -25,6 +27,12 @@ func newKafkaClient() (*kgo.Client, error) {
 		kgo.DialTimeout(10 * time.Second),
 		kgo.ClientID("tracking-api-consumer"),
 		kgo.InstanceID(fmt.Sprintf("instance-%d", os.Getpid())),
+
+		// Security: SCRAM-SHA-256 Authentication
+		kgo.SASL(scram.Auth{
+			User: "consumer",
+			Pass: "consumer-secret",
+		}.AsSha256Mechanism()),
 	}
 	return kgo.NewClient(opts...)
 }
@@ -32,7 +40,9 @@ func newKafkaClient() (*kgo.Client, error) {
 func processRecord(ctx context.Context, record *kgo.Record, store *TrackingStore, dlqClient *kgo.Client, hub *Hub) error {
 	var env schema.EventEnvelope
 	if err := json.Unmarshal(record.Value, &env); err != nil {
-		sendToDLQ(ctx, dlqClient, record, fmt.Sprintf("unmarshal envelope gagal: %v", err))
+		if err := sendToDLQ(ctx, dlqClient, record, fmt.Sprintf("unmarshal envelope gagal: %v", err)); err != nil {
+			return fmt.Errorf("dlq write gagal: %w", err)
+		}
 		return nil
 	}
 
@@ -40,7 +50,9 @@ func processRecord(ctx context.Context, record *kgo.Record, store *TrackingStore
 	case topicLocation:
 		var loc schema.LocationPayload
 		if err := json.Unmarshal(env.Payload, &loc); err != nil {
-			sendToDLQ(ctx, dlqClient, record, fmt.Sprintf("unmarshal location payload gagal: %v", err))
+			if err := sendToDLQ(ctx, dlqClient, record, fmt.Sprintf("unmarshal location payload gagal: %v", err)); err != nil {
+				return fmt.Errorf("dlq write gagal: %w", err)
+			}
 			return nil
 		}
 		store.applyLocation(loc, env.Timestamp)
@@ -51,7 +63,9 @@ func processRecord(ctx context.Context, record *kgo.Record, store *TrackingStore
 	case topicOrderStatus:
 		var status schema.OrderStatusPayload
 		if err := json.Unmarshal(env.Payload, &status); err != nil {
-			sendToDLQ(ctx, dlqClient, record, fmt.Sprintf("unmarshal status payload gagal: %v", err))
+			if err := sendToDLQ(ctx, dlqClient, record, fmt.Sprintf("unmarshal status payload gagal: %v", err)); err != nil {
+				return fmt.Errorf("dlq write gagal: %w", err)
+			}
 			return nil
 		}
 		store.applyOrderStatus(status, env.Timestamp)
@@ -64,7 +78,7 @@ func processRecord(ctx context.Context, record *kgo.Record, store *TrackingStore
 	return nil
 }
 
-func sendToDLQ(ctx context.Context, client *kgo.Client, original *kgo.Record, reason string) {
+func sendToDLQ(ctx context.Context, client *kgo.Client, original *kgo.Record, reason string) error {
 	slog.Warn("kirim ke DLQ",
 		"topic", original.Topic,
 		"partition", original.Partition,
@@ -85,11 +99,12 @@ func sendToDLQ(ctx context.Context, client *kgo.Client, original *kgo.Record, re
 		},
 	}
 
-	client.Produce(ctx, dlqRecord, func(_ *kgo.Record, err error) {
-		if err != nil {
-			slog.Error("gagal kirim ke DLQ", "err", err)
-		}
-	})
+	// Synchronous DLQ write to guarantee no data loss
+	if err := client.ProduceSync(ctx, dlqRecord).FirstErr(); err != nil {
+		slog.Error("gagal kirim ke DLQ", "err", err)
+		return err
+	}
+	return nil
 }
 
 func runConsumerLoop(ctx context.Context, client *kgo.Client, dlqClient *kgo.Client, store *TrackingStore, hub *Hub) {
@@ -106,11 +121,34 @@ func runConsumerLoop(ctx context.Context, client *kgo.Client, dlqClient *kgo.Cli
 			}
 		}
 
-		fetches.EachRecord(func(record *kgo.Record) {
-			if err := processRecord(ctx, record, store, dlqClient, hub); err != nil {
-				slog.Error("process record gagal (akan retry)", "err", err)
-			}
+		var wg sync.WaitGroup
+		var hasError bool
+		var errMu sync.Mutex
+
+		// Process partitions concurrently. Ordering is maintained per-partition.
+		fetches.EachPartition(func(p kgo.FetchTopicPartition) {
+			wg.Add(1)
+			go func(p kgo.FetchTopicPartition) {
+				defer wg.Done()
+				for _, record := range p.Records {
+					if err := processRecord(ctx, record, store, dlqClient, hub); err != nil {
+						slog.Error("fatal: process record gagal", "err", err)
+						errMu.Lock()
+						hasError = true
+						errMu.Unlock()
+						// Stop processing this partition's remaining records to maintain ordering and prevent offset commit
+						return
+					}
+				}
+			}(p)
 		})
+
+		wg.Wait()
+
+		if hasError {
+			slog.Error("Menghentikan consumer karena kegagalan proses fatal (DLQ down). Offset TIDAK akan dicommit agar tidak ada data loss.")
+			os.Exit(1)
+		}
 
 		if err := client.CommitUncommittedOffsets(ctx); err != nil {
 			if ctx.Err() == nil {

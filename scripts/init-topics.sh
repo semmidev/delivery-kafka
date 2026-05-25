@@ -102,6 +102,30 @@ echo ""
 echo "═══════════════════════════════════════════════"
 echo "✅ Semua topics berhasil dibuat!"
 echo ""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SCRAM Users & ACLs
+# ─────────────────────────────────────────────────────────────────────────────
+echo "🔐 Membuat SCRAM Users..."
+docker exec kafka-1 /opt/kafka/bin/kafka-configs.sh $BOOTSTRAP --alter --add-config 'SCRAM-SHA-256=[password=producer-secret]' --entity-type users --entity-name producer
+docker exec kafka-1 /opt/kafka/bin/kafka-configs.sh $BOOTSTRAP --alter --add-config 'SCRAM-SHA-256=[password=consumer-secret]' --entity-type users --entity-name consumer
+echo "   ✓ OK"
+
+echo ""
+echo "🛡️ Mengonfigurasi ACLs..."
+# Producer ACLs (WRITE ke delivery-*)
+docker exec kafka-1 /opt/kafka/bin/kafka-acls.sh $BOOTSTRAP \
+  --add --allow-principal User:producer --operation Write \
+  --topic delivery- --resource-pattern-type prefixed
+
+# Consumer ACLs (READ ke topic, READ ke group, WRITE ke DLQ)
+docker exec kafka-1 /opt/kafka/bin/kafka-acls.sh $BOOTSTRAP --add --allow-principal User:consumer --operation Read --topic delivery-driver-location-updated
+docker exec kafka-1 /opt/kafka/bin/kafka-acls.sh $BOOTSTRAP --add --allow-principal User:consumer --operation Read --topic delivery-order-status-changed
+docker exec kafka-1 /opt/kafka/bin/kafka-acls.sh $BOOTSTRAP --add --allow-principal User:consumer --operation Read --group tracking-api-service
+docker exec kafka-1 /opt/kafka/bin/kafka-acls.sh $BOOTSTRAP --add --allow-principal User:consumer --operation Write --topic delivery-dlq-failed-events
+echo "   ✓ OK"
+
+echo ""
 echo "📋 Daftar topics:"
 docker exec kafka-1 /opt/kafka/bin/kafka-topics.sh $BOOTSTRAP --list
 echo "═══════════════════════════════════════════════"

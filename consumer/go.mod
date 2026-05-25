@@ -16,6 +16,7 @@ require (
 	github.com/pierrec/lz4/v4 v4.1.22 // indirect
 	github.com/twmb/franz-go/pkg/kmsg v1.9.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
+	golang.org/x/crypto v0.50.0 // indirect
 )
 
 replace github.com/sammidev/delivery-kafka/schema => ../schema

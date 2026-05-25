@@ -10,9 +10,15 @@ x-kafka-common: &kafka-common
     KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-1:9093,2@kafka-2:9093,3@kafka-3:9093
 
     # --- Listeners ---
-    KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+    KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:SASL_PLAINTEXT,CONTROLLER:PLAINTEXT
     KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
     KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+
+    # --- Security (SASL/SCRAM & ACLs) ---
+    KAFKA_SASL_ENABLED_MECHANISMS: SCRAM-SHA-256
+    KAFKA_AUTHORIZER_CLASS_NAME: org.apache.kafka.metadata.authorizer.StandardAuthorizer
+    KAFKA_SUPER_USERS: User:ANONYMOUS
+    KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/jaas.conf"
 
     # --- Replication & durability best practices ---
     KAFKA_DEFAULT_REPLICATION_FACTOR: "3"
@@ -47,6 +53,7 @@ services:
       - "9092:9092"
     volumes:
       - kafka-1-data:/var/lib/kafka/data
+      - ./jaas.conf:/etc/kafka/jaas.conf:ro
     networks:
       - kafka-net
 
@@ -62,6 +69,7 @@ services:
       - "9093:9092"
     volumes:
       - kafka-2-data:/var/lib/kafka/data
+      - ./jaas.conf:/etc/kafka/jaas.conf:ro
     networks:
       - kafka-net
 
@@ -77,6 +85,7 @@ services:
       - "9094:9092"
     volumes:
       - kafka-3-data:/var/lib/kafka/data
+      - ./jaas.conf:/etc/kafka/jaas.conf:ro
     networks:
       - kafka-net
 
