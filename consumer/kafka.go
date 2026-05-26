@@ -24,6 +24,8 @@ func newKafkaClient() (*kgo.Client, error) {
 		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
 		kgo.DisableAutoCommit(),
 		kgo.FetchMaxBytes(10_000_000),
+		kgo.FetchMinBytes(1_000_000), // Memaksa consumer menunggu sampai data terkumpul 1MB
+		kgo.FetchMaxWait(500 * time.Millisecond), // Max tunggu 500ms jika data belum 1MB
 		kgo.DialTimeout(10 * time.Second),
 		kgo.ClientID("tracking-api-consumer"),
 		kgo.InstanceID(fmt.Sprintf("instance-%d", os.Getpid())),

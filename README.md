@@ -161,6 +161,22 @@ delivery-dlq-failed-events         # dead letter queue
 - `unclean.leader.election=false` — tidak korbankan konsistensi untuk availability
 - Kompresi `lz4` — fast compression, cocok untuk high-throughput
 
+### Kafka Pattern Untuk Production
+Berdasarkan implementasi *best practice*, aplikasi ini mengadopsi 3 pola utama:
+
+#### 1. Exactly-Once Semantics (Menjamin Kebenaran Data)
+- **Idempotence**: Aktif secara bawaan pada producer (`RequiredAcks(kgo.AllISRAcks())` di `franz-go`). Menghindari duplikasi pesan yang disebabkan oleh kegagalan jaringan setelah pesan terkirim tetapi belum di-acknowledge.
+- **Partition Key yang Konsisten**: Menggunakan ID Entitas (misal `driver_id` atau `order_id`) sebagai `Partition Key` untuk memastikan seluruh *event* milik entitas yang sama masuk ke partisi yang sama dan diproses secara berurutan.
+
+#### 2. Throughput Optimization (Optimalisasi Performa)
+- **Producer Batching & Linger**: Producer mengumpulkan pesan (`kgo.ProducerLinger(5 * time.Millisecond)`) dan memiliki batas *batch* (`kgo.ProducerBatchMaxBytes(1_000_000)`) agar latensi jaringan dihemat.
+- **Kompresi LZ4**: `kgo.ProducerBatchCompression(kgo.Lz4Compression())` digunakan untuk mengurangi *bandwidth* yang terpakai dengan beban CPU yang efisien.
+- **Consumer Fetch Optimization**: Memaksa *consumer* untuk menunggu sejumlah data terkumpul (`kgo.FetchMinBytes(1_000_000)` dan `kgo.FetchMaxWait(500 * time.Millisecond)`) sebelum mengambilnya, mencegah pemborosan *round-trip* *byte* demi *byte*.
+
+#### 3. Failure Recovery (Ketahanan & Pemulihan)
+- **Manual Commit**: Fitur auto-commit dinonaktifkan (`kgo.DisableAutoCommit()`). Aplikasi secara manual merekam *offset* (`client.CommitUncommittedOffsets(ctx)`) **hanya** setelah data selesai diproses (termasuk penyimpanan ke state in-memory atau *Dead Letter Queue*), sehingga tidak ada risiko kehilangan data apabila *crash* di tengah jalan.
+- **Static Group Membership**: Menggunakan ID instance tetap (`kgo.InstanceID(...)`) agar rebalance Kafka Consumer Group tidak terpicu (sehingga meminimalkan fenomena *stop-the-world*) apabila consumer melakukan *rolling restart* yang singkat.
+
 ---
 
 ## Debug Commands
