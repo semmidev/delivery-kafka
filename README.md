@@ -103,33 +103,44 @@ curl http://localhost:8081/healthz
 
 ## Arsitektur & Best Practices
 
-### Topic Naming: `{domain}-{entity}-{event-type}`
+Sistem tracking pengiriman (*delivery tracking*) ini dirancang untuk menangani aliran data yang terus menerus dengan tingkat keandalan yang tinggi. Untuk mencapai hal tersebut, kami menerapkan berbagai *best practices* dalam penggunaan Kafka, mulai dari desain topik, struktur pesan, hingga konfigurasi pada tingkat *producer*, *consumer*, dan *cluster*. 
 
-> **Note**: Kita menggunakan hyphens/strip (`-`) alih-alih titik (`.`) atau underscore (`_`) pada nama topic. Sistem internal metrics Kafka menerjemahkan titik dan underscore menjadi underscore. Hal ini dapat menyebabkan bentrok pada nama metrics (misal `delivery.driver` dan `delivery_driver` keduanya menjadi `delivery_driver`), sehingga Kafka akan memunculkan warning `Due to limitations in metric names...`. Menggunakan hyphens menghindari warning ini.
+Berikut adalah penjabaran mendalam mengenai arsitektur dan pola produksi yang diterapkan:
 
-```text
-delivery-driver-location-updated   # lokasi GPS driver
-delivery-order-status-changed      # perubahan status pesanan
-delivery-order-created             # pesanan baru
-delivery-order-driver-assigned     # driver ditugaskan
-delivery-dlq-failed-events         # dead letter queue
-```
+### 1. Desain Topik & Naming Convention
 
-### Partition Key
-| Topic | Key | Alasan |
-|-------|-----|--------|
-| `location-updated` | `driver_id` | Semua lokasi 1 driver → 1 partition → ordering terjaga |
-| `order.status-changed` | `order_id` | Semua status 1 order → 1 partition → lifecycle urut |
+Penamaan topik (*topic naming*) sangat krusial dalam sistem berbasis event karena mencerminkan domain bisnis dan jenis kejadian (*event*). Kami menggunakan pola penamaan standar: `{domain}-{entity}-{event-type}`.
 
-### Message Format — Event Envelope
+> **Note**: Kami konsisten menggunakan karakter hyphens/strip (`-`) sebagai pemisah kata, alih-alih menggunakan titik (`.`) atau *underscore* (`_`). Hal ini karena metrik internal Kafka menerjemahkan baik titik maupun *underscore* menjadi karakter *underscore*. Jika ada topik `delivery.driver` dan `delivery_driver`, keduanya akan menghasilkan nama metrik `delivery_driver` yang sama, memicu *warning* `Due to limitations in metric names...` dan membuat pemantauan menjadi rancu. Penggunaan *hyphens* sepenuhnya menghindari masalah *metric collision* ini.
+
+**Daftar Topik Utama:**
+- `delivery-driver-location-updated`: Mencatat setiap pembaruan koordinat GPS dari *driver* secara real-time.
+- `delivery-order-status-changed`: Mencatat transisi status pesanan (misal: dari *processing* menjadi *delivering*).
+- `delivery-order-created`: Mencatat saat pesanan baru masuk ke dalam sistem.
+- `delivery-order-driver-assigned`: Mencatat penugasan seorang *driver* ke sebuah pesanan.
+- `delivery-dlq-failed-events`: *Dead Letter Queue* (DLQ) khusus untuk menampung pesan-pesan cacat yang gagal diproses.
+
+### 2. Strategi Partition Key
+
+Pemilihan `Partition Key` menentukan bagaimana pesan didistribusikan ke dalam partisi Kafka. Pemilihan *key* yang tepat menjamin pengurutan data (*ordering guarantee*) yang sangat penting dalam sistem pelacakan.
+
+| Topik | Partition Key | Rasionalisasi & Dampak |
+|-------|---------------|------------------------|
+| `*-location-updated` | `driver_id` | Pesan lokasi dikirim sangat cepat. Dengan `driver_id` sebagai key, seluruh pembaruan lokasi dari satu *driver* yang sama dipastikan masuk ke **partisi yang sama**. Karena Kafka menjamin urutan pesan dalam satu partisi, posisi pergerakan *driver* di peta tidak akan pernah melompat mundur secara tiba-tiba akibat *race condition* antar *consumer*. |
+| `*-status-changed` | `order_id` | Siklus hidup sebuah pesanan (Dibuat -> Driver Ditugaskan -> Diambil -> Selesai) harus diproses berurutan. Menggunakan `order_id` menjamin urutan transisi status (*state transition*) secara mutlak. |
+
+### 3. Struktur Pesan: Pola Event Envelope
+
+Alih-alih mengirimkan JSON yang bentuknya berubah-ubah, semua kejadian dibungkus dalam sebuah arsitektur pola **Event Envelope**. Pola ini memberikan meta-informasi yang kaya tanpa harus membongkar seluruh isi (*payload*) pesan.
+
 ```json
 {
-  "event_id":   "1718123456789-42",
-  "event_type": "driver.location.updated",
-  "version":    1,
-  "timestamp":  "2025-06-01T10:00:00Z",
-  "source":     "driver-tracking-service",
-  "payload": {
+  "event_id":   "1718123456789-42",       // ID unik untuk pelacakan (traceability) & deduplikasi
+  "event_type": "driver.location.updated",// Jenis event, membantu routing di sisi consumer
+  "version":    1,                        // Versi skema, krusial untuk backward/forward compatibility
+  "timestamp":  "2025-06-01T10:00:00Z",   // Waktu aktual kejadian (event time)
+  "source":     "driver-tracking-service",// Identitas layanan pengirim
+  "payload": {                            // Data spesifik yang bervariasi sesuai event_type
     "driver_id": "driver-001",
     "order_id":  "order-000123",
     "latitude":  -6.2088,
@@ -141,41 +152,34 @@ delivery-dlq-failed-events         # dead letter queue
 }
 ```
 
-### Producer Settings
-- `acks=all` + `min.insync.replicas=2` → tidak ada data loss
-- Idempotent producer → tidak ada duplikasi saat retry
-- `linger=5ms` + batching → throughput tinggi
-- Exponential backoff retry
-- Async produce + error callback
+### 4. Konfigurasi Producer: Kecepatan tanpa Kompromi Data
 
-### Consumer Settings
-- **Consumer group** `tracking-api-service` → horizontal scalable (tambah instance = lebih banyak partition ditangani)
-- **Manual offset commit** setelah processing → at-least-once guarantee
-- **Static membership** (`instance.id`) → mengurangi rebalance saat rolling restart
-- **Dead letter queue** → poison pill tidak block konsumsi
+*Producer* bertugas menerima ribuan titik lokasi setiap detiknya. Konfigurasi difokuskan pada *throughput* maksimum sekaligus mencegah hilangnya data (*data loss*).
 
-### Cluster Config
-- `replication.factor=3` — toleran kehilangan 2 broker sekaligus
-- `min.insync.replicas=2` — minimal 2 broker acknowledge
-- `auto.create.topics.enable=false` — topic management eksplisit
-- `unclean.leader.election=false` — tidak korbankan konsistensi untuk availability
-- Kompresi `lz4` — fast compression, cocok untuk high-throughput
+- **`acks=all` & `min.insync.replicas=2`**: Memaksa *producer* untuk menunggu konfirmasi tertulis dari minimal 2 *broker* yang berbeda sebelum menganggap pesan berhasil terkirim. Ini adalah standar emas untuk mencegah kehilangan data jika terjadi *crash* pada server.
+- **Idempotent Producer Aktif**: Memastikan tidak ada duplikasi data akibat *network retry*. Jika koneksi terputus sesaat setelah pesan terkirim (tapi belum dikonfirmasi), *producer* dapat mencoba lagi secara aman (`RequiredAcks(kgo.AllISRAcks())`); Kafka akan membuang duplikatnya.
+- **Batching & Linger (`linger.ms=5`)**: Daripada mengirim pesan satu per satu yang menguras *network I/O*, *producer* menahan pengiriman selama maksimal 5 milidetik (`kgo.ProducerLinger(5 * time.Millisecond)`) untuk menggabungkan banyak titik lokasi ke dalam satu kumpulan (*batch*). Strategi ini meningkatkan *throughput* secara eksponensial.
+- **Kompresi LZ4**: Algoritma ini dipilih (`kgo.ProducerBatchCompression(kgo.Lz4Compression())`) karena sangat ringan di CPU tapi ampuh mengecilkan ukuran data JSON berulang, menekan latensi jaringan secara signifikan.
+- **Async Produce & Retry**: Pengiriman dilakukan di *background* (*asynchronous*) agar aplikasi tidak tertahan (*blocking*), dipadukan dengan strategi *exponential backoff* saat jaringan tidak stabil.
 
-### Kafka Pattern Untuk Production
-Berdasarkan implementasi *best practice*, aplikasi ini mengadopsi 3 pola utama:
+### 5. Konfigurasi Consumer: Tangguh Menghadapi Beban
 
-#### 1. Exactly-Once Semantics (Menjamin Kebenaran Data)
-- **Idempotence**: Aktif secara bawaan pada producer (`RequiredAcks(kgo.AllISRAcks())` di `franz-go`). Menghindari duplikasi pesan yang disebabkan oleh kegagalan jaringan setelah pesan terkirim tetapi belum di-acknowledge.
-- **Partition Key yang Konsisten**: Menggunakan ID Entitas (misal `driver_id` atau `order_id`) sebagai `Partition Key` untuk memastikan seluruh *event* milik entitas yang sama masuk ke partisi yang sama dan diproses secara berurutan.
+Sistem *consumer* di ujung lain menerima aliran data masif untuk ditampilkan di peta, menyimpan ke database, dan dikalkulasi secara *real-time*.
 
-#### 2. Throughput Optimization (Optimalisasi Performa)
-- **Producer Batching & Linger**: Producer mengumpulkan pesan (`kgo.ProducerLinger(5 * time.Millisecond)`) dan memiliki batas *batch* (`kgo.ProducerBatchMaxBytes(1_000_000)`) agar latensi jaringan dihemat.
-- **Kompresi LZ4**: `kgo.ProducerBatchCompression(kgo.Lz4Compression())` digunakan untuk mengurangi *bandwidth* yang terpakai dengan beban CPU yang efisien.
-- **Consumer Fetch Optimization**: Memaksa *consumer* untuk menunggu sejumlah data terkumpul (`kgo.FetchMinBytes(1_000_000)` dan `kgo.FetchMaxWait(500 * time.Millisecond)`) sebelum mengambilnya, mencegah pemborosan *round-trip* *byte* demi *byte*.
+- **Horizontal Scalability (Consumer Group)**: Menggunakan *group* `tracking-api-service`. Saat beban GPS meningkat (misal jam sibuk), Anda tinggal menjalankan *instance* *consumer* lebih banyak. Kafka akan membagi rata partisi ke semua *instance* yang aktif secara otomatis.
+- **Manual Offset Commit (At-Least-Once)**: Fitur auto-commit dimatikan (`kgo.DisableAutoCommit()`). Sistem baru akan menggeser tanda baca (*offset*) Kafka **setelah** pemrosesan benar-benar tuntas (misal: WebSocket telah di-broadcast dan status *database* sudah diperbarui, `client.CommitUncommittedOffsets(ctx)`). Ini mencegah *data loss* bila aplikasi tiba-tiba *crash* di tengah jalan.
+- **Static Membership (`instance.id`)**: Biasanya, saat *consumer restart* (misal saat proses *deployment* kode baru), Kafka akan menghentikan seluruh proses untuk menata ulang partisi (*Stop-The-World Rebalance*). Dengan ID Statis (`kgo.InstanceID(...)`), Kafka akan "menahan" partisi untuk *instance* tersebut dan menunggu sesaat, membuat proses *rolling restart* tidak terasa oleh pengguna.
+- **Consumer Fetch Optimization**: Memaksa *consumer* untuk menunggu sejumlah data terkumpul (`kgo.FetchMinBytes(1_000_000)` dan `kgo.FetchMaxWait(500 * time.Millisecond)`) sebelum mengambilnya, mencegah pemborosan *round-trip* pada saat sistem sedikit lengang.
+- **Dead Letter Queue (DLQ)**: Jika ada pesan dengan format JSON hancur (*poison pill*), sistem tidak akan macet/mengulang *error* terus menerus. Pesan rusak itu dilempar ke topik DLQ untuk diinvestigasi manual, dan proses pelacakan terus berjalan mulus.
 
-#### 3. Failure Recovery (Ketahanan & Pemulihan)
-- **Manual Commit**: Fitur auto-commit dinonaktifkan (`kgo.DisableAutoCommit()`). Aplikasi secara manual merekam *offset* (`client.CommitUncommittedOffsets(ctx)`) **hanya** setelah data selesai diproses (termasuk penyimpanan ke state in-memory atau *Dead Letter Queue*), sehingga tidak ada risiko kehilangan data apabila *crash* di tengah jalan.
-- **Static Group Membership**: Menggunakan ID instance tetap (`kgo.InstanceID(...)`) agar rebalance Kafka Consumer Group tidak terpicu (sehingga meminimalkan fenomena *stop-the-world*) apabila consumer melakukan *rolling restart* yang singkat.
+### 6. Arsitektur Cluster Kafka: Standar High Availability
+
+Cluster berjalan sepenuhnya pada mode KRaft (menghilangkan ketergantungan pada Apache ZooKeeper) untuk performa dan pengelolaan yang jauh lebih efisien.
+
+- **Replication Factor (RF) = 3**: Setiap kepingan data memiliki 3 salinan fisik yang tersebar di mesin berbeda. Sistem sanggup bertahan meski 2 *broker* meledak/terbakar bersamaan.
+- **Min In-Sync Replicas (min ISR) = 2**: Menjamin konsistensi data. Pesan baru akan ditolak (*failed fast*) jika jumlah salinan aktif kurang dari 2, mencegah data penting dicatat di *broker* yang setengah rusak.
+- **Unclean Leader Election = False**: Memprioritaskan Konsistensi (C) di atas Ketersediaan (A) dalam teori CAP. Jika *broker* utama (*leader*) partisi mati, hanya *broker* yang memiliki data ter-sinkron penuh yang boleh menggantikannya, guna mencegah anomali data (misal: pesanan yang sudah *Delivered* mundur kembali menjadi *Processing*).
+- **Auto Create Topics = False**: Praktik disiplin tinggi. Mencegah terciptanya topik siluman akibat salah ketik (typo) di sisi klien yang bisa menjadi "sampah tak terawat" membebani *cluster*.
 
 ---
 
